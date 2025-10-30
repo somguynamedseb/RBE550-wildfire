@@ -9,7 +9,7 @@ import glob
 from PIL import Image
 import re
 
-from robots import *
+from robots_old import *
 
 MAX_Y = 36
 MAX_X = 36

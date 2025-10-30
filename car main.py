@@ -9,7 +9,7 @@ import glob
 from PIL import Image
 import re
 
-from robots import car_bot
+from robots_old import car_bot
 
 MAX_Y = 36
 MAX_X = 36

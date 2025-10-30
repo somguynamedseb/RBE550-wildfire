@@ -1,6 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from robots import square_bot
+from robots_old import square_bot
 import random
 from shapely.geometry import Polygon
 from shapely import contains_xy
