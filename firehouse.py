@@ -6,7 +6,6 @@ import heapq
 import time as t
 from scipy.ndimage import binary_dilation
 import copy
-from skimage.draw import polygon as draw_polygon
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
 from shapely import contains_xy
