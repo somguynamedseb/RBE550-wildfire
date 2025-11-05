@@ -27,10 +27,10 @@ class Firetruck:
         self.scale = scale
         
         # Physical limits
-        self.MAX_ACC = 2.0  # m/s^2
+        self.MAX_ACC = 4.0  # m/s^2
         self.MAX_VEL = 10.0  # m/s
         self.MAX_STEERING_ANGLE = np.pi / 4  # 45 degrees (typical for vehicles)
-        self.MIN_TURN_RAD = self.get_min_turning_radius()
+        self.MIN_TURN_RAD = 13.0
         
         # Current state
         self.velocity = 0.0  # forward velocity (m/s)
