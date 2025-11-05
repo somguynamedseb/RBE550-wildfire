@@ -17,9 +17,9 @@ from matplotlib.path import Path
 class Firetruck:
     def __init__(self, pos: tuple[float, float], angle: float, scale: int):
         # Units in meters and seconds
-        self.WIDTH = 1.8
-        self.LENGTH = 5.2
-        self.WHEELBASE = 2.8
+        self.WIDTH = 2.2
+        self.LENGTH = 4.9
+        self.WHEELBASE = 3
         
         self.y = pos[0]
         self.x = pos[1]
@@ -171,25 +171,35 @@ class Firetruck:
             return np.inf
         return self.WHEELBASE / np.tan(self.steering_angle)
     
-    def generate_motion_primitives_for_firetruck(truck, step_distance=1.0):
+    
+        
+    def get_min_turning_radius(self):
         """
-        Generate motion primitives for your firetruck
+        Calculate minimum turning radius for firetruck
+        """
+        return self.WHEELBASE / np.tan(self.MAX_STEERING_ANGLE)
+    
+    def generate_motion_primitives_for_firetruck(truck, step_distance=1.0):  # Increased to 1.0m
+        """
+        Generate motion primitives
+        
+        Args:
+            step_distance: distance in METERS
         
         Returns: list of (velocity, steering_angle, duration)
         """
         primitives = []
         
-        # Steering angles to sample
+        # 5 steering angles is sufficient
         steering_angles = np.linspace(
             -truck.MAX_STEERING_ANGLE, 
             truck.MAX_STEERING_ANGLE, 
             5
         )
         
-        velocity = 2.0  # constant forward speed for planning
+        velocity = 2.0  # m/s
         
         for steering in steering_angles:
-            # Calculate how long to drive to cover step_distance
             if abs(steering) < 1e-6:
                 duration = step_distance / velocity
             else:
@@ -198,11 +208,5 @@ class Firetruck:
                 duration = arc_angle * abs(R) / velocity
             
             primitives.append((velocity, steering, duration))
-        
+
         return primitives
-    
-    def get_min_turning_radius(self):
-        """
-        Calculate minimum turning radius for firetruck
-        """
-        return self.WHEELBASE / np.tan(self.MAX_STEERING_ANGLE)
