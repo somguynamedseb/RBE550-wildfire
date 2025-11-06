@@ -1,18 +1,7 @@
 import numpy as np
-import numpy as np
 from numpy import pi,cos,sin
-from collections import deque
-import heapq
-import time as t
-from scipy.ndimage import binary_dilation
-import copy
-from shapely.geometry import Polygon, Point
-from shapely.ops import unary_union
-from shapely import contains_xy
-import numpy as np
-import heapq
-from scipy.spatial import cKDTree
-from matplotlib.path import Path
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 class Firetruck:
     def __init__(self, pos: tuple[float, float], angle: float, scale: int):
@@ -170,9 +159,7 @@ class Firetruck:
         if abs(self.steering_angle) < 1e-8:
             return np.inf
         return self.WHEELBASE / np.tan(self.steering_angle)
-    
-    
-        
+
     def get_min_turning_radius(self):
         """
         Calculate minimum turning radius for firetruck
@@ -210,3 +197,4 @@ class Firetruck:
             primitives.append((velocity, steering, duration))
 
         return primitives
+    

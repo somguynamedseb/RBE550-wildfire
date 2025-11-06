@@ -8,6 +8,7 @@ from firehouse import Firetruck
 from pathfinding import DubinsPath
 from pathfinding import State
 import pathfinding as pf
+import matplotlib.animation as animation
 
 ### ENVIRONMENT GEN FUNCTIONS
 def create_cost_grid(occupancy_grid, robot_radius, safety_distance=2.0):
@@ -74,13 +75,298 @@ def voronoi_to_cost_grid(voronoi_field, occupancy_grid, max_useful_distance=None
     binary_grid = v_cost_to_binary(cost_grid)
     return cost_grid,binary_grid
 
-def v_cost_to_binary(cost_grid,th = 0.5):
+def v_cost_to_binary(cost_grid,th = 0.3):
     binary_grid = np.zeros_like(cost_grid)
     for i in range(len(cost_grid)):
         for j in range(len(cost_grid[0])):
             if cost_grid[i][j] >= th:
                 binary_grid[i][j] = 1
     return binary_grid
+
+def path_to_motion_commands(path, truck, dt=0.05):
+    """
+    Convert path waypoints to motion commands for the truck
+    
+    Args:
+        path: list of (y, x, theta) tuples from pathfinding
+        truck: Firetruck instance
+        dt: simulation timestep
+    
+    Returns:
+        commands: list of (velocity, steering_angle, duration) tuples
+    """
+    commands = []
+    
+    for i in range(len(path) - 1):
+        y_curr, x_curr, theta_curr = path[i]
+        y_next, x_next, theta_next = path[i + 1]
+        
+        # Calculate distance and angle change
+        dx = x_next - x_curr
+        dy = y_next - y_curr
+        distance = np.sqrt(dx**2 + dy**2)
+        
+        # Calculate steering angle needed
+        # This is approximate - actual motion primitives were used in planning
+        dtheta = truck.wrap_to_pi(theta_next - theta_curr)
+        
+        # Use fixed velocity
+        velocity = 2.0  # m/s
+        
+        # Estimate steering angle from heading change
+        if abs(dtheta) < 1e-6:
+            steering_angle = 0.0
+        else:
+            # Approximate: R = distance / dtheta, steering = atan(L/R)
+            R = distance / abs(dtheta) if abs(dtheta) > 1e-6 else 1e10
+            steering_angle = np.arctan(truck.WHEELBASE / R)
+            if dtheta < 0:
+                steering_angle = -steering_angle
+        
+        # Clamp steering
+        steering_angle = np.clip(steering_angle, 
+                                -truck.MAX_STEERING_ANGLE, 
+                                truck.MAX_STEERING_ANGLE)
+        
+        # Duration to cover this segment
+        duration = distance / velocity
+        
+        commands.append((velocity, steering_angle, duration))
+    
+    return commands
+
+def simulate_path_following(path, truck, binary_grid, minor_grid_size=0.2, dt=0.05):
+    """
+    Simulate truck following the planned path
+    
+    Args:
+        path: list of (y, x, theta) waypoints
+        truck: Firetruck instance (will be reset to start)
+        binary_grid: for visualization
+        minor_grid_size: meters per grid cell
+        dt: simulation timestep
+    
+    Returns:
+        trajectory: list of (y, x, theta, t) actual positions over time
+        commands_used: list of commands executed
+    """
+    # Reset truck to start position
+    start_y, start_x, start_theta = path[0]
+    truck.y = start_y
+    truck.x = start_x
+    truck.ang = start_theta
+    
+    # Get motion commands from path
+    commands = path_to_motion_commands(path, truck, dt)
+    
+    # Simulate execution
+    trajectory = [(truck.y, truck.x, truck.ang, 0.0)]  # (y, x, theta, time)
+    current_time = 0.0
+    
+    print(f"Simulating path with {len(commands)} segments...")
+    
+    for cmd_idx, (velocity, steering_angle, duration) in enumerate(commands):
+        print(f"  Segment {cmd_idx+1}/{len(commands)}: v={velocity:.1f}m/s, "
+            f"steer={np.degrees(steering_angle):.1f}°, dur={duration:.2f}s")
+        
+        # Set control
+        truck.set_control(velocity, steering_angle)
+        
+        # Simulate for duration
+        steps = int(duration / dt)
+        for step in range(steps):
+            truck.timestep(dt)
+            current_time += dt
+            trajectory.append((truck.y, truck.x, truck.ang, current_time))
+    
+    print(f"Simulation complete: {len(trajectory)} timesteps, {current_time:.2f}s total")
+    
+    return trajectory, commands
+
+def visualize_trajectory(path, trajectory, binary_grid, dist_cost_grid, obstacle_grid,
+                        firetruck, minor_grid_size=0.2):
+    """
+    Visualize planned path vs actual simulated trajectory
+    
+    Args:
+        path: planned waypoints from A*
+        trajectory: actual simulated positions
+        binary_grid: obstacles
+        dist_cost_grid: cost grid
+        firetruck: Firetruck instance
+        minor_grid_size: meters per grid cell
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+    
+    # Left: Path vs Trajectory
+    ax1.imshow(dist_cost_grid, cmap='plasma', origin='lower', vmin=0, vmax=1, alpha=0.5)
+    ax1.contour(binary_grid, levels=[0.5], colors='cyan', linewidths=1)
+    ax1.contour(obstacle_grid, levels=[0.5], colors='k', linewidths=2)
+    # Plot planned path
+    path_y = [p[0] / minor_grid_size for p in path]
+    path_x = [p[1] / minor_grid_size for p in path]
+    ax1.plot(path_x, path_y, 'b--', linewidth=2, label='Planned path', alpha=0.7)
+    ax1.scatter(path_x, path_y, c='blue', s=50, marker='o', zorder=5, alpha=0.7)
+    
+    # Plot actual trajectory
+    traj_y = [t[0] / minor_grid_size for t in trajectory]
+    traj_x = [t[1] / minor_grid_size for t in trajectory]
+    ax1.plot(traj_x, traj_y, 'g-', linewidth=1.5, label='Actual trajectory', alpha=0.8)
+    
+    # Mark start and end
+    ax1.plot(path_x[0], path_y[0], 'go', markersize=12, label='Start', zorder=10)
+    ax1.plot(path_x[-1], path_y[-1], 'r*', markersize=20, label='Goal', zorder=10)
+    
+    ax1.set_title('Planned Path vs Simulated Trajectory')
+    ax1.set_xlabel('X (grid cells)')
+    ax1.set_ylabel('Y (grid cells)')
+    ax1.legend()
+    ax1.invert_yaxis()
+    ax1.grid(True, alpha=0.3)
+    
+    # Right: Vehicle footprints along trajectory
+    ax2.imshow(binary_grid, cmap='binary', origin='lower', alpha=0.3)
+    ax2.plot(traj_x, traj_y, 'g-', linewidth=1.5, alpha=0.5)
+    ax2.contour(obstacle_grid, levels=[0.5], colors='k', linewidths=2)
+
+    # Show vehicle footprint at intervals
+    step_size = max(1, len(trajectory) // 20)  # Show ~20 footprints
+    for i in range(0, len(trajectory), step_size):
+        y, x, theta, t = trajectory[i]
+        corners = firetruck.calc_boundary((y, x, theta), scale=1)
+        corners.append(corners[0])  # Close polygon
+        
+        corner_x = [c[0] / minor_grid_size for c in corners]
+        corner_y = [c[1] / minor_grid_size for c in corners]
+        
+        # Color by time (blue=early, red=late)
+        color = plt.cm.coolwarm(i / len(trajectory))
+        ax2.plot(corner_x, corner_y, color=color, linewidth=1.5, alpha=0.6)
+        ax2.fill(corner_x, corner_y, color=color, alpha=0.1)
+    
+    # Final position highlighted
+    y_final, x_final, theta_final, t_final = trajectory[-1]
+    final_corners = firetruck.calc_boundary((y_final, x_final, theta_final), scale=1)
+    final_corners.append(final_corners[0])
+    final_x = [c[0] / minor_grid_size for c in final_corners]
+    final_y = [c[1] / minor_grid_size for c in final_corners]
+    ax2.plot(final_x, final_y, 'r-', linewidth=3, label='Final position')
+    
+    ax2.set_title(f'Vehicle Motion Over Time ({t_final:.1f}s)')
+    ax2.set_xlabel('X (grid cells)')
+    ax2.set_ylabel('Y (grid cells)')
+    ax2.legend()
+    ax2.invert_yaxis()
+    
+    plt.tight_layout()
+    plt.savefig('trajectory_simulation.png', dpi=150)
+    print("Saved trajectory_simulation.png")
+
+def check_trajectory_collisions(trajectory, binary_grid, firetruck, minor_grid_size=0.2):
+    """
+    Check if simulated trajectory collides with obstacles
+    
+    Returns:
+        (is_valid, collision_indices)
+    """
+    collision_indices = []
+    
+    for i, (y, x, theta, t) in enumerate(trajectory):
+        corners = firetruck.calc_boundary((y, x, theta), scale=1)
+        
+        for corner_x_m, corner_y_m in corners:
+            grid_x = int(round(corner_x_m / minor_grid_size))
+            grid_y = int(round(corner_y_m / minor_grid_size))
+            
+            # Check bounds
+            if (grid_x < 0 or grid_x >= binary_grid.shape[1] or
+                grid_y < 0 or grid_y >= binary_grid.shape[0]):
+                collision_indices.append(i)
+                break
+            
+            # Check collision
+            if binary_grid[grid_y, grid_x] == 1:
+                collision_indices.append(i)
+                break
+    
+    is_valid = len(collision_indices) == 0
+    return is_valid, collision_indices
+
+def animate_trajectory(trajectory, binary_grid, firetruck, minor_grid_size=0.2, 
+                       frame_skip=5):
+    """
+    Create animated GIF of truck following trajectory
+    """
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    # Static background
+    ax.imshow(binary_grid, cmap='binary', origin='lower', alpha=0.3)
+    
+    # Initialize plots
+    traj_line, = ax.plot([], [], 'g-', linewidth=2, label='Trajectory')
+    vehicle_patch, = ax.plot([], [], 'r-', linewidth=2, label='Vehicle')
+    time_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, 
+                       verticalalignment='top', fontsize=12,
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    ax.legend(loc='upper right')
+    ax.set_xlabel('X (grid cells)')
+    ax.set_ylabel('Y (grid cells)')
+    ax.invert_yaxis()
+    
+    traj_x_hist = []
+    traj_y_hist = []
+    
+    def init():
+        traj_line.set_data([], [])
+        vehicle_patch.set_data([], [])
+        time_text.set_text('')
+        return traj_line, vehicle_patch, time_text
+    
+    def animate(frame):
+        i = frame * frame_skip
+        if i >= len(trajectory):
+            i = len(trajectory) - 1
+        
+        y, x, theta, t = trajectory[i]
+        
+        # Update trajectory history
+        traj_x_hist.append(x / minor_grid_size)
+        traj_y_hist.append(y / minor_grid_size)
+        traj_line.set_data(traj_x_hist, traj_y_hist)
+        
+        # Update vehicle footprint
+        corners = firetruck.calc_boundary((y, x, theta), scale=1)
+        corners.append(corners[0])
+        corner_x = [c[0] / minor_grid_size for c in corners]
+        corner_y = [c[1] / minor_grid_size for c in corners]
+        vehicle_patch.set_data(corner_x, corner_y)
+        
+        # Update time
+        time_text.set_text(f'Time: {t:.2f}s')
+        
+        return traj_line, vehicle_patch, time_text
+    
+    num_frames = len(trajectory) // frame_skip
+    anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                  frames=num_frames, interval=50, 
+                                  blit=True, repeat=True)
+    
+    anim.save('trajectory_animation.gif', writer='pillow', fps=20)
+    print("Saved trajectory_animation.gif")
+    plt.close()
+
+
+
+
+
+
+
+
+
+
+
+
 
 MAX_Y = 250 #meters
 MAX_X = 250 #meters
@@ -105,85 +391,75 @@ random.seed(24)
 
 values = random.choices(range(10), k=int(OBS_X/shape_dim)*int(OBS_Y/shape_dim))
 shapes = [
-    # 1. I shape (vertical)
     [
         [0,0,1,0,0],
         [0,0,1,0,0],
+        [0,0,1,1,1],
         [0,0,1,0,0],
         [0,0,1,0,0],
-        [0,0,0,0,0],
     ],
-    # 2. I shape (horizontal)
     [
         [0,0,0,0,0],
         [0,1,1,1,1],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
+        [0,0,0,0,1],
+        [0,0,0,0,1],
         [0,0,0,0,0],
     ],
-    # 3. L shape
     [
-        [0,0,1,0,0],
-        [0,0,1,0,0],
+        [0,1,1,0,0],
+        [0,1,1,0,0],
         [0,0,1,1,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
+        [0,0,1,1,0],
+        [0,0,0,1,1],
     ],
-    # 4. J shape (mirrored L)
     [
         [0,1,0,0,0],
         [0,1,0,0,0],
         [1,1,0,0,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
+        [1,1,1,0,0],
+        [0,1,1,0,0],
     ],
-    # 5. T shape
+    [
+        [0,0,1,0,0],
+        [0,0,1,0,0],
+        [1,1,1,1,1],
+        [0,0,1,0,0],
+        [0,0,1,0,0],
+    ],
     [
         [0,0,0,0,0],
         [0,1,1,1,0],
-        [0,0,1,0,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
-    ],
-    # 6. O shape (square)
-    [
-        [0,0,0,0,0],
-        [0,1,1,0,0],
-        [0,1,1,0,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
-    ],
-    # 7. S shape
-    [
-        [0,0,0,0,0],
-        [0,0,1,1,0],
-        [0,1,1,0,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
-    ],
-    # 8. Z shape
-    [
-        [0,0,0,0,0],
-        [0,1,1,0,0],
-        [0,0,1,1,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
-    ],
-    # 9. Cross shape
-    [
-        [0,0,1,0,0],
         [0,1,1,1,0],
-        [0,0,1,0,0],
-        [0,0,0,0,0],
+        [0,1,1,1,0],
         [0,0,0,0,0],
     ],
-    # 10. U shape
+    [
+        [0,0,1,0,0],
+        [0,0,1,1,1],
+        [0,1,1,0,0],
+        [0,0,1,0,0],
+        [0,0,0,0,0],
+    ],
+    [
+        [0,1,1,0,0],
+        [1,1,1,0,0],
+        [0,0,1,1,0],
+        [0,0,1,1,0],
+        [0,0,1,1,0],
+    ],
+    [
+        [0,0,1,1,0],
+        [0,1,1,1,0],
+        [0,0,1,1,0],
+        [0,0,1,1,0],
+        [0,0,1,1,0],
+    ],
     [
         [0,0,0,0,0],
         [0,1,0,1,0],
         [0,1,1,1,0],
-        [0,0,0,0,0],
-        [0,0,0,0,0],
+        [0,1,0,1,0],
+        [0,1,0,1,0],
     ],
 ]
 
@@ -208,8 +484,8 @@ obstacle_grid[0,0:len(obstacle_grid[0]-1)] = 1
 obstacle_grid[len(obstacle_grid[0])-1,0:len(obstacle_grid[0]-1)] = 1
 
 robot_width = 2.2 #based on assignment details
-safety_buffer = 0.1
-robot_radius = int(scale*(robot_width / 2)* (1+safety_buffer))
+safety_buffer = 0.2
+robot_radius = int(major_grid_size*robot_width*(1+safety_buffer))
 
 cost_grid,voronoi_field = create_cost_grid(obstacle_grid,robot_radius)
 print("cost grid calculated")
@@ -251,7 +527,7 @@ def visualize_cost_grid(cost_grid, occupancy_grid):
     ax.invert_yaxis()
     plt.tight_layout()
     plt.savefig("voronoi_cost_grid.png")
-    # plt.show()
+
     
 def visualize_bin_grid(binary_grid):
     """
@@ -271,10 +547,10 @@ def visualize_bin_grid(binary_grid):
     # ax.invert_yaxis()
     plt.tight_layout()
     plt.savefig("valid_squares.png")
-    # plt.show()
 
 
-# Usage
+
+# # Usage
 visualize_cost_grid(dist_cost_grid_up, obstacle_grid_up)
 visualize_bin_grid(binary_grid_up)
 
@@ -290,6 +566,14 @@ start_angle = 0
 goal_y_meters = 190
 goal_x_meters = 190
 goal_angle = np.deg2rad(45)
+
+# goal_y_meters = 190
+# goal_x_meters = 190
+# goal_angle = np.deg2rad(45)
+
+# goal_y_meters = 190
+# goal_x_meters = 190
+# goal_angle = np.deg2rad(45)
 
 start_grid_y = int(start_y_meters / minor_grid_size)  
 start_grid_x = int(start_x_meters / minor_grid_size)  
@@ -355,7 +639,7 @@ result = pf.hybrid_astar_with_NHO(
     valid_grid=binary_grid,
     cost_grid=dist_cost_grid,
     truck=firetruck,
-    minor_grid_size=minor_grid_size,  # ADD THIS
+    minor_grid_size=minor_grid_size,
     timeout=120.0
 )
 
@@ -400,8 +684,7 @@ if path is not None:
     fig, ax = plt.subplots(figsize=(12, 10))
     
     # Show cost grid as background
-    ax.imshow(dist_cost_grid_up, cmap='plasma', origin='lower', 
-              vmin=0, vmax=1, alpha=0.7)
+    ax.imshow(dist_cost_grid_up, cmap='plasma', origin='lower', vmin=0, vmax=1, alpha=0.7)
     
     # Show obstacles
     ax.contour(obstacle_grid_up, levels=[0.5], colors='cyan', linewidths=2)
@@ -455,8 +738,74 @@ if path is not None:
     plt.tight_layout()
     plt.savefig("path_result.png", dpi=150)
     print("Saved path_result.png")
-    # plt.show()
+    plt.cla()
+    
+    print(f"\n{'='*50}")
+    print("PATH FOUND - Starting Simulation")
+    print(f"{'='*50}\n")
+    
+    # Simulate truck following the path
+    trajectory, commands = simulate_path_following(
+        path=path,
+        truck=firetruck,
+        binary_grid=binary_grid,
+        minor_grid_size=0.2,
+        dt=0.01
+    )
+    
+    # Check for collisions in simulated trajectory
+    is_valid, collision_indices = check_trajectory_collisions(
+        trajectory=trajectory,
+        binary_grid=obstacle_grid,
+        firetruck=firetruck,
+        minor_grid_size=0.2
+    )
+    
+    if is_valid:
+        print("✓ Trajectory is collision-free!")
+    else:
+        print(f"✗ Warning: {len(collision_indices)} collision timesteps detected!")
+        print(f"  First collision at t={trajectory[collision_indices[0]][3]:.2f}s")
+    
+    # Visualize results
+    visualize_trajectory(
+        path=path,
+        trajectory=trajectory,
+        binary_grid=binary_grid,
+        dist_cost_grid=dist_cost_grid,
+        obstacle_grid=obstacle_grid,
+        firetruck=firetruck,
+        minor_grid_size=0.2
+    )
+    
+    # Calculate path statistics
+    total_distance = sum(
+        np.sqrt((trajectory[i+1][0] - trajectory[i][0])**2 + 
+                (trajectory[i+1][1] - trajectory[i][1])**2)
+        for i in range(len(trajectory) - 1)
+    )
+    
+    final_time = trajectory[-1][3]
+    avg_speed = total_distance / final_time if final_time > 0 else 0
+    
+    print(f"\n{'='*50}")
+    print("TRAJECTORY STATISTICS")
+    print(f"{'='*50}")
+    print(f"Total distance traveled: {total_distance:.2f}m")
+    print(f"Total time: {final_time:.2f}s")
+    print(f"Average speed: {avg_speed:.2f}m/s")
+    print(f"Number of waypoints: {len(path)}")
+    print(f"Number of timesteps: {len(trajectory)}")
+    print(f"Timestep size: 0.05s")
+    
+    # Calculate error from planned path
+    path_endpoints_dist = np.sqrt(
+        (path[-1][0] - trajectory[-1][0])**2 + 
+        (path[-1][1] - trajectory[-1][1])**2
+    )
+    print(f"Final position error: {path_endpoints_dist:.3f}m")
 
+    # animate_trajectory(trajectory, binary_grid, firetruck, minor_grid_size=0.2)
 else:
     print("no path found")
     fig, ax = plt.subplots(figsize=(10, 10))
@@ -488,5 +837,5 @@ else:
     ax.invert_yaxis()
     plt.tight_layout()
     plt.savefig("start_goal_debug.png")
-    # plt.show()
+
     
