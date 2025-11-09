@@ -14,6 +14,13 @@ class Firetruck:
         self.x = pos[1]
         self.ang = angle
         self.scale = scale
+        self.y_tar = -1
+        self.x_tar = -1
+        self.path = []
+        self.trajectory = []
+        self.traj_index = 0
+        self.wait_for_water = 0
+        self.score = 0
         
         # Physical limits
         self.MAX_ACC = 4.0  # m/s^2
@@ -166,35 +173,35 @@ class Firetruck:
         """
         return self.WHEELBASE / np.tan(self.MAX_STEERING_ANGLE)
     
-    def generate_motion_primitives_for_firetruck(truck, step_distance=1.0):  # Increased to 1.0m
-        """
-        Generate motion primitives
+    # def generate_motion_primitives_for_firetruck(truck, step_distance=1.0):  # Increased to 1.0m
+    #     """
+    #     Generate motion primitives
         
-        Args:
-            step_distance: distance in METERS
+    #     Args:
+    #         step_distance: distance in METERS
         
-        Returns: list of (velocity, steering_angle, duration)
-        """
-        primitives = []
+    #     Returns: list of (velocity, steering_angle, duration)
+    #     """
+    #     primitives = []
         
-        # 5 steering angles is sufficient
-        steering_angles = np.linspace(
-            -truck.MAX_STEERING_ANGLE, 
-            truck.MAX_STEERING_ANGLE, 
-            5
-        )
+    #     # 5 steering angles is sufficient
+    #     steering_angles = np.linspace(
+    #         -truck.MAX_STEERING_ANGLE, 
+    #         truck.MAX_STEERING_ANGLE, 
+    #         5
+    #     )
         
-        velocity = 2.0  # m/s
+    #     velocity = 2.0  # m/s
         
-        for steering in steering_angles:
-            if abs(steering) < 1e-6:
-                duration = step_distance / velocity
-            else:
-                R = truck.WHEELBASE / np.tan(steering)
-                arc_angle = step_distance / abs(R)
-                duration = arc_angle * abs(R) / velocity
+    #     for steering in steering_angles:
+    #         if abs(steering) < 1e-6:
+    #             duration = step_distance / velocity
+    #         else:
+    #             R = truck.WHEELBASE / np.tan(steering)
+    #             arc_angle = step_distance / abs(R)
+    #             duration = arc_angle * abs(R) / velocity
             
-            primitives.append((velocity, steering, duration))
+    #         primitives.append((velocity, steering, duration))
 
-        return primitives
+    #     return primitives
     

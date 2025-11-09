@@ -4,7 +4,7 @@ from scipy.ndimage import distance_transform_edt, binary_dilation
 import matplotlib.pyplot as plt
 from firehouse import Firetruck
 import prm_planner as prm
-import astar
+from arsonist import wumpi
 
 ### ENVIRONMENT GEN FUNCTIONS
 def create_cost_grid(occupancy_grid, robot_radius, safety_distance=2.0):
@@ -515,8 +515,12 @@ for x in range(int(OBS_X/shape_scale)):
         obstacle_grid[y*int(OBS_Y/(shape_dim)):(y+1)*int(OBS_Y/shape_dim),x*int(OBS_X/shape_dim):(x+1)*int(OBS_X/shape_dim)] = shape_w_buffer
         counter+=1
 
+# 2 = burned down and now valid | 1 = obstacle | 0 = free square | -1 = obstacle on fire
 obstacle_grid = np.kron(obstacle_grid, np.ones((scale, scale), dtype=np.int8))
+burning_list = []
+burnt_list = []
 
+#preventing passting through edges
 obstacle_grid[0:len(obstacle_grid)-1,[0]] = 1
 obstacle_grid[0:len(obstacle_grid)-1,[len(obstacle_grid)-1]] = 1
 obstacle_grid[0,0:len(obstacle_grid[0]-1)] = 1
@@ -582,3 +586,76 @@ def visualize_bin_grid(binary_grid):
     plt.tight_layout()
     plt.savefig("valid_squares.png")
 
+
+valid_indices = np.argwhere((obstacle_grid == 0))
+wumpus_start = valid_indices[random.randint(0,len(valid_indices)-1)]
+wumpus_target = valid_indices[random.randint(0,len(valid_indices)-1)]
+wumpus = wumpi(wumpus_start,wumpus_target, obstacle_grid)
+
+
+def visualize_start_goal_path(start, goal, path, obstacle_grid):
+    """
+    Visualize start, goal, and A* path on obstacle grid
+    
+    Args:
+        start: (y, x) tuple in grid coordinates
+        goal: (y, x) tuple in grid coordinates
+        path: list of (y, x) waypoints from A*, or None
+        obstacle_grid: obstacle grid
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Show obstacle grid
+    ax.imshow(obstacle_grid, cmap='gray', origin='lower')
+    
+    # Plot path if it exists
+    if path is not None:
+        path_y = [p[0] for p in path]
+        path_x = [p[1] for p in path]
+        
+        ax.plot(path_x, path_y, 'b-', linewidth=2, label='A* Path', alpha=0.7)
+        ax.scatter(path_x, path_y, c='blue', s=20, zorder=5, alpha=0.6)
+        
+        # Calculate path length
+        path_length = sum(
+            np.sqrt((path[i+1][0] - path[i][0])**2 + 
+                   (path[i+1][1] - path[i][1])**2)
+            for i in range(len(path) - 1)
+        )
+        
+        title = f'Wumpus Path\n{len(path)} waypoints, length: {path_length:.1f} cells'
+    else:
+        title = 'Wumpus - No Path Found'
+    
+    # Plot start and goal (on top of path)
+    ax.plot(start[1], start[0], 'go', markersize=15, label='Start', zorder=10)
+    ax.plot(goal[1], goal[0], 'r*', markersize=20, label='Goal', zorder=10)
+    
+    # Add text labels
+    ax.text(start[1], start[0] - 10, f'Start\n({start[0]}, {start[1]})', 
+            color='green', fontsize=9, ha='center', weight='bold',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    ax.text(goal[1], goal[0] + 10, f'Goal\n({goal[0]}, {goal[1]})', 
+            color='red', fontsize=9, ha='center', weight='bold',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    ax.legend(loc='upper right', fontsize=11)
+    ax.set_title(title, fontsize=12, weight='bold')
+    ax.set_xlabel('X (grid cells)')
+    ax.set_ylabel('Y (grid cells)')
+    ax.invert_yaxis()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('wumpus_path.png', dpi=150)
+    print(f"Start: {start}, Goal: {goal}")
+    if path:
+        print(f"Path length: {path_length:.1f} cells")
+    print("Saved wumpus_path.png")
+    plt.show()
+
+
+# Visualize with path
+visualize_start_goal_path(wumpus_start, wumpus_target, wumpus.path, obstacle_grid)

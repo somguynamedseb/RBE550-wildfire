@@ -1,38 +1,75 @@
 import heapq
 import numpy as np
 
-class wumpus:
-    def __init__(self,pos=[0,0],target=[0,0],obstacle_grid=[]):
+class wumpi:
+    def __init__(self,pos=[0,0]):
         self.y = pos[0]
         self.x = pos[1]
-        self.tar_y = target[0]
-        self.tar_x = target[1]
-        self.obstacle_grid = obstacle_grid
-        self.path = astar_grid((self.y,self.x),(self.tar_y,self.tar_x),self.obstacle_grid)
+        self.y_tar = None
+        self.x_tar = None
+        self.path = []
+        self.score = 0
         
-    def update_path(self):
-        self.path = astar_grid((self.y,self.x),(self.tar_y,self.tar_x),self.obstacle_grid) 
+    def update_path(self,target,obstacle_grid):
+        self.y_tar = target[0]
+        self.x_tar = target[1]
+        self.path = astar_grid((self.y,self.x),(self.y_tar,self.x_tar),obstacle_grid) 
     
-    def timestep(self,burn_grid):
+    def timestep(self,obstacle_grid,time):
         y,x = self.path[0]
         self.y = y
         self.x = x
-        path = path[1:]
-        self.arson(burn_grid)
+        self.path = self.path[1:]
+        burn_grid,burning_points = self.arson(obstacle_grid,time)
+        return burn_grid,burning_points
         
-    def arson(self,burn_grid):
-        #1 = free square | 0 = obstacle | -1 = obstacle on fire
-        dirs = [(-1,0),(-1,1),(-1,-1),(1,0),(1,1),(1,-1),(0,-1),(0,1)]
+        
+    def arson(self, burn_grid, time, radius=40):
+        """
+        Mark cells within a radius as burning
+        
+        Args:
+            burn_grid: grid to modify (3=burned out, 2=on fire, 1=obstacle, 0=free, -1=burned free)
+            time: current time
+            radius: radius in grid cells (1 = immediate neighbors, 2 = 2 cells away, etc.)
+        
+        Returns:
+            burn_grid: modified grid
+            burning_points: list of (y, x, time) tuples for newly burning cells
+        """
         rows, cols = burn_grid.shape
-        for dir in dirs:
-            dy,dx = dir
-            y = self.y+dy
-            x = self.x+dx
-            if 0 < y < rows-1 and 0 < x < cols-1:
-                if burn_grid[y][x] == 0:
-                    burn_grid[y][x] = -1 #on fire
-                    
-    import numpy as np
+        burning_points = []
+        
+        # Generate all points within radius
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                # Skip center point (self)
+                if dy == 0 and dx == 0:
+                    continue
+                
+                # Optional: Use circular radius instead of square
+                # if dy**2 + dx**2 > radius**2:
+                #     continue
+                
+                y = self.y + dy
+                x = self.x + dx
+                
+                # Bounds check
+                if 0 <= y < rows and 0 <= x < cols:
+                    if burn_grid[y][x] == 1:  # Not on fire or previously burned
+                        burn_grid[y][x] = 2  # On fire
+                        burning_points.append((y, x, time))
+        # if len(burning_points)>0:
+        #     print("AAAAAAAAAAAAAAAAAAAAAAAAAAH")
+        self.score += len(burning_points)
+        return burn_grid, burning_points
+    def get_pos(self):
+        return (self.y,self.x)
+    
+    def get_target(self):
+        return (self.y_tar,self.x_tar)
+    
+import numpy as np
 import heapq
 
 def astar_grid(start, goal, obstacle_grid):

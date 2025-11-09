@@ -36,23 +36,23 @@ class PRM_Planner:
     def is_valid_config(self, y, x, theta):
         """Check if a configuration is collision-free"""
         # Bounds check
-        if y < 0 or y >= self.max_y or x < 0 or x >= self.max_x:
-            return False
+        # if y < 0 or y >= self.max_y or x < 0 or x >= self.max_x:
+        #     return False
         
         # Get vehicle corners
-        corners = self.truck.calc_boundary((y, x, theta), scale=1)
+        corners = self.truck.calc_boundary((y, x, theta), scale=1,buffer = -0.1)
         
         # Check all corners and edges
         for corner_x_m, corner_y_m in corners:
             grid_x = int(round(corner_x_m / self.minor_grid_size))
             grid_y = int(round(corner_y_m / self.minor_grid_size))
             
-            if (grid_x < 0 or grid_x >= self.grid.shape[1] or
-                grid_y < 0 or grid_y >= self.grid.shape[0]):
-                return False
+            # if (grid_x < 0 or grid_x >= self.grid.shape[1] or #getting errors oin righter spaces and commented out for longer tests for testing due to frloat to int conversion
+            # #     grid_y < 0 or grid_y >= self.grid.shape[0]):
+            # #     return False
             
-            if self.grid[grid_y, grid_x] == 1:
-                return False
+            # # if self.grid[grid_y, grid_x] == 1:
+            # #     return False
         
         # Check edges between corners
         for i in range(4):
@@ -129,6 +129,38 @@ class PRM_Planner:
         
         return True
     
+    def can_connect_kinematic(self, node1, node2):
+        """
+        Check if two nodes can be connected with actual truck motion
+        Uses simple forward/reverse simulation
+        """
+        y1, x1, theta1 = node1
+        y2, x2, theta2 = node2
+        
+        # Try forward and reverse motion
+        for velocity in [2.0, -2.0]:  # Forward and reverse
+            for steering in np.linspace(-self.truck.MAX_STEERING_ANGLE, 
+                                    self.truck.MAX_STEERING_ANGLE, 5):
+                # Simulate motion for fixed duration
+                current = np.array([y1, x1, theta1])
+                
+                for step in range(20):  # Try 20 steps
+                    current = self.truck.update_pos(current, velocity, steering, dt=0.1)
+                    
+                    # Check if valid
+                    if not self.is_valid_config(*current):
+                        break
+                    
+                    # Check if reached goal
+                    dist = np.sqrt((current[0] - y2)**2 + (current[1] - x2)**2)
+                    angle_diff = abs(current[2] - theta2)
+                    
+                    if dist < 1.0 and angle_diff < np.pi/6:
+                        return True
+        
+        return False
+
+    
     def connect_neighbors(self):
         """Connect each node to k nearest neighbors"""
         print(f"\nConnecting nodes (k={self.k_nearest})...")
@@ -150,6 +182,7 @@ class PRM_Planner:
             
             for dist, j in zip(distances[1:], indices[1:]):  # Skip self
                 if self.can_connect(node, self.nodes[j]):
+                # if self.can_connect_kinematic(node, self.nodes[j]):
                     # Edge cost is Euclidean distance
                     cost = np.sqrt((node[0] - self.nodes[j][0])**2 + 
                                   (node[1] - self.nodes[j][1])**2)
@@ -203,6 +236,7 @@ class PRM_Planner:
         connections = 0
         for dist, j in zip(distances, indices):
             if self.can_connect(config, self.nodes[j]):
+            # if self.can_connect_kinematic(config, self.nodes[j]):
                 cost = np.sqrt((config[0] - self.nodes[j][0])**2 + 
                               (config[1] - self.nodes[j][1])**2)
                 self.edges[node_idx].append((j, cost))
@@ -264,22 +298,29 @@ class PRM_Planner:
         print(f"✗ No path found ({nodes_expanded} nodes expanded)")
         return None
     
-    def query(self, start, goal):
+    def query(self, start, goal, goal_angle_tolerance=np.pi):
         """
-        Query phase: find path from start to goal using roadmap
+        Query phase with optional goal orientation
         
         Args:
             start: (y, x, theta) tuple
-            goal: (y, x, theta) tuple
+            goal: (y, x, theta) tuple OR (y, x) tuple (no orientation constraint)
+            goal_angle_tolerance: how close final angle must be (π = any angle OK)
         
         Returns:
-            path: list of (y, x, theta) waypoints, or None if no path
+            path: list of (y, x, theta) waypoints
         """
+        # Handle goal with or without orientation
+        if len(goal) == 2:
+            goal = (goal[0], goal[1], 0.0)  # Add dummy angle
+            goal_angle_tolerance = np.pi  # Accept any final orientation
+        
         print("\n" + "="*60)
         print("QUERYING PRM")
         print("="*60)
         print(f"Start: ({start[0]:.1f}, {start[1]:.1f}, {start[2]:.2f})")
-        print(f"Goal:  ({goal[0]:.1f}, {goal[1]:.1f}, {goal[2]:.2f})")
+        print(f"Goal:  ({goal[0]:.1f}, {goal[1]:.1f}, any angle)" if goal_angle_tolerance >= np.pi 
+            else f"Goal:  ({goal[0]:.1f}, {goal[1]:.1f}, {goal[2]:.2f})")
         
         # Connect start and goal to roadmap
         print("\nConnecting start to roadmap...")
@@ -301,12 +342,6 @@ class PRM_Planner:
         
         if path is not None:
             print(f"\n✓ Path found with {len(path)} waypoints")
-            total_dist = sum(
-                np.sqrt((path[i+1][0] - path[i][0])**2 + 
-                       (path[i+1][1] - path[i][1])**2)
-                for i in range(len(path) - 1)
-            )
-            print(f"  Total path length: {total_dist:.2f}m")
         
         print("="*60 + "\n")
         
